@@ -8,19 +8,19 @@ import (
 
 func TestPasswordChangeRevokesOtherSessionsAndRotatesCurrentSession(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rdpweb.db")
-	ts, db := newTestApp(t, dbPath)
+	ts, db := newTestApp(t, dbPath, "")
 	defer ts.Close()
 	defer db.Close()
 
 	oldPassword := "correct horse battery staple"
 	newPassword := "new correct horse battery staple"
-	primary := &client{base: ts.URL}
+	primary := &testClient{base: ts.URL}
 	if r, body := primary.do(t, "POST", "/api/setup", `{"username":"owner","password":"`+oldPassword+`"}`); r.StatusCode != 200 {
 		t.Fatalf("setup %d %s", r.StatusCode, body)
 	}
 	oldCookieValue := primary.cookie.Value
 
-	secondary := &client{base: ts.URL}
+	secondary := &testClient{base: ts.URL}
 	if r, body := secondary.do(t, "POST", "/api/login", `{"username":"owner","password":"`+oldPassword+`"}`); r.StatusCode != 200 {
 		t.Fatalf("second login %d %s", r.StatusCode, body)
 	}
@@ -42,11 +42,11 @@ func TestPasswordChangeRevokesOtherSessionsAndRotatesCurrentSession(t *testing.T
 		t.Fatalf("secondary session survived password rotation: %d", r.StatusCode)
 	}
 
-	oldLogin := &client{base: ts.URL}
+	oldLogin := &testClient{base: ts.URL}
 	if r, _ := oldLogin.do(t, "POST", "/api/login", `{"username":"owner","password":"`+oldPassword+`"}`); r.StatusCode != 401 {
 		t.Fatalf("old password still logs in: %d", r.StatusCode)
 	}
-	newLogin := &client{base: ts.URL}
+	newLogin := &testClient{base: ts.URL}
 	if r, response := newLogin.do(t, "POST", "/api/login", `{"username":"owner","password":"`+newPassword+`"}`); r.StatusCode != 200 {
 		t.Fatalf("new password login failed: %d %s", r.StatusCode, response)
 	}
@@ -54,11 +54,11 @@ func TestPasswordChangeRevokesOtherSessionsAndRotatesCurrentSession(t *testing.T
 
 func TestPasswordChangeRejectsWrongCurrentPassword(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rdpweb.db")
-	ts, db := newTestApp(t, dbPath)
+	ts, db := newTestApp(t, dbPath, "")
 	defer ts.Close()
 	defer db.Close()
 
-	c := &client{base: ts.URL}
+	c := &testClient{base: ts.URL}
 	if r, body := c.do(t, "POST", "/api/setup", `{"username":"owner","password":"correct horse battery staple"}`); r.StatusCode != 200 {
 		t.Fatalf("setup %d %s", r.StatusCode, body)
 	}
