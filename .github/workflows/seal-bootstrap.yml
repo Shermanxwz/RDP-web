@@ -8,36 +8,27 @@ permissions:
   contents: write
 
 jobs:
-  harden:
+  refresh-lock:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: hardening/seal-v1
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.27.1'
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
-      - name: Apply deterministic hardening patch
-        run: python3 scripts/apply-seal-hardening.py
-      - name: Normalize dependencies
+      - name: Refresh deterministic npm lock
         run: |
-          go mod tidy
-          gofmt -w $(find . -name '*.go')
           npm install --package-lock-only --ignore-scripts
-      - name: Verify Go hardening
+          npm audit --audit-level=high
+      - name: Commit lock refresh when needed
         run: |
-          go test -race ./...
-          go vet ./...
-          CGO_ENABLED=0 go build -trimpath ./cmd/rdpweb
-      - name: Commit verified non-workflow hardening
-        run: |
-          git restore .github/workflows/ci.yml
+          if git diff --quiet -- package-lock.json; then
+            exit 0
+          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A
-          git commit -m 'fix: harden sealed v1 lifecycle and verification'
+          git add package-lock.json
+          git commit -m 'chore: refresh Playwright test lockfile'
           git push origin HEAD:hardening/seal-v1
