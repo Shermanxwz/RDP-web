@@ -19,12 +19,13 @@ jobs:
           cache: true
       - name: Format
         run: test -z "$(gofmt -l $(find . -name '*.go'))"
-      - name: Test
+      - name: Race tests
         run: go test -race ./...
       - name: Vet
         run: go vet ./...
-      - name: Build
+      - name: Production build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/rdpweb
+
   docker:
     runs-on: ubuntu-latest
     steps:
@@ -34,4 +35,41 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: rdp-web:ci
+      - name: Real container lifecycle and persistence
+        env:
+          RDPWEB_IMAGE: rdp-web:ci
+        run: bash scripts/container-smoke.sh
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install E2E dependencies
+        run: npm ci
+      - name: Audit E2E dependencies
+        run: npm audit --audit-level=high
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Start application
+        env:
+          RDPWEB_ADDR: ':18081'
+          RDPWEB_DATA_DIR: ${{ runner.temp }}/browser-data
+          RDPWEB_SETUP_TOKEN: browser-setup-token
+        run: |
+          go run ./cmd/rdpweb >"${{ runner.temp }}/rdpweb-browser.log" 2>&1 &
+          for i in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:18081/healthz >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18081/healthz >/dev/null
+      - name: Browser product E2E
+        run: npx playwright test tests/browser.spec.js --project=chromium
