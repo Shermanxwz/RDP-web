@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +21,27 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "reset-password":
+			if err := resetPasswordCommand(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+				fmt.Fprintln(os.Stderr, "reset-password:", err)
+				os.Exit(1)
+			}
+			return
+		case "help", "--help", "-h":
+			printUsage(os.Stdout)
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
+			printUsage(os.Stderr)
+			os.Exit(2)
+		}
+	}
+	serve()
+}
+
+func serve() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	addr := env("RDPWEB_ADDR", ":8080")
 	dataDir := env("RDPWEB_DATA_DIR", "./data")
@@ -92,6 +115,55 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown", "error", err)
 	}
+}
+
+func resetPasswordCommand(args []string, in io.Reader, out io.Writer) error {
+	if len(args) != 1 || args[0] != "--password-stdin" {
+		return errors.New("usage: rdpweb reset-password --password-stdin")
+	}
+	dataDir := env("RDPWEB_DATA_DIR", "./data")
+	dbPath := filepath.Join(dataDir, "rdpweb.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("database not found at %s", dbPath)
+		}
+		return err
+	}
+
+	passwordBytes, err := io.ReadAll(io.LimitReader(in, 2049))
+	if err != nil {
+		return fmt.Errorf("read password: %w", err)
+	}
+	password := strings.TrimRight(string(passwordBytes), "\r\n")
+	hash, err := security.HashPassword(password)
+	if err != nil {
+		return err
+	}
+
+	db, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+	owner, err := db.Owner(context.Background())
+	if errors.Is(err, store.ErrNotFound) {
+		return errors.New("owner account does not exist; complete first-run setup instead")
+	}
+	if err != nil {
+		return fmt.Errorf("read owner: %w", err)
+	}
+	if err := db.ReplaceOwnerPassword(context.Background(), owner.ID, hash); err != nil {
+		return fmt.Errorf("replace password: %w", err)
+	}
+	fmt.Fprintf(out, "owner password reset for %s; all existing web sessions revoked\n", owner.Username)
+	return nil
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "RDP Web")
+	fmt.Fprintln(w, "  rdpweb                         start the web service")
+	fmt.Fprintln(w, "  rdpweb reset-password --password-stdin")
+	fmt.Fprintln(w, "                                 reset the unique owner password from stdin")
 }
 
 func env(key, fallback string) string {

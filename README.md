@@ -16,6 +16,8 @@ This split keeps the cloud-list problem in RDP Web and leaves rendering, input, 
 - SQLite persistence with WAL mode, foreign keys and a database-level single-owner invariant.
 - Protected first-run provisioning token; public registration does not exist after setup.
 - Argon2id password hashing, server-side opaque sessions, HttpOnly/SameSite cookies and CSRF tokens.
+- Owner password rotation from the PWA; successful rotation revokes every existing web session and issues a fresh session to the current browser.
+- Local/container password recovery through stdin only, so a forgotten owner password does not require deleting the database or placing a secret in command-line arguments.
 - Persistent login-failure throttling and database-backed readiness checks.
 - Device groups, favorites, search, notes, RD Gateway and connection options.
 - Microsoft-compatible `rdp://` generation for Android/iOS/macOS.
@@ -24,7 +26,7 @@ This split keeps the cloud-list problem in RDP Web and leaves rendering, input, 
 - Import of RdpSync Android schema-1 JSON; legacy `password` fields are deliberately discarded.
 - Portable JSON export plus atomic all-or-nothing RDP Web backup restore.
 - Hardened Docker/Compose deployment: non-root process, read-only root filesystem, dropped capabilities and persistent named volume.
-- CI gates for race tests, vet/build, dependency audit, real container restart persistence and Chromium product E2E.
+- CI gates for Linux race tests, native Windows/macOS tests, dependency audit, real container restart persistence and Chromium product E2E.
 
 ## Quick start
 
@@ -58,6 +60,22 @@ RDPWEB_SECURE_COOKIE=auto
 ```
 
 With `auto`, Secure cookies are enabled automatically when `RDPWEB_PUBLIC_URL` uses HTTPS. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+## Owner password lifecycle
+
+Use **修改密码** in the authenticated PWA for normal password rotation. The current password is required. A successful change revokes every existing session and immediately replaces the current browser's session/CSRF credentials.
+
+If the owner password is forgotten, use host/container control instead of deleting the database. Stop the service and pipe the replacement password over stdin:
+
+```bash
+docker compose stop rdp-web
+read -rsp 'New RDP Web password: ' RDPWEB_NEW_PASSWORD; echo
+printf '%s' "$RDPWEB_NEW_PASSWORD" | docker compose run --rm -T rdp-web reset-password --password-stdin
+unset RDPWEB_NEW_PASSWORD
+docker compose up -d
+```
+
+The password is never accepted as a positional CLI argument and is not echoed by the recovery command. All existing web sessions are revoked after a successful reset.
 
 ## Run without Docker
 
@@ -99,14 +117,16 @@ Read [`SECURITY.md`](SECURITY.md) before exposing an instance to the internet.
 
 Every PR must pass:
 
-- `gofmt`, `go test -race ./...`, `go vet ./...` and a production build.
+- `gofmt`, `go test -race ./...`, `go vet ./...` and a production build on Linux.
+- Native `go test`, `go vet` and build on current GitHub-hosted Windows and macOS runners.
 - npm high-severity dependency audit for the browser E2E toolchain.
 - A real Docker lifecycle test that creates data, destroys the container, starts a second container on the same named volume, logs in again and verifies persistence.
-- A real Chromium product E2E covering first-run setup, PWA service worker, groups/devices, search, `.rdp` download, JSON export and re-login persistence.
+- A real Chromium product E2E covering first-run setup, PWA service worker, groups/devices, search, password rotation, `.rdp` download, JSON export and old/new-password login behavior.
+- Account lifecycle integration/CLI tests proving session revocation and local password recovery.
 
 See [`docs/SEAL-ACCEPTANCE.md`](docs/SEAL-ACCEPTANCE.md) for the exact acceptance contract.
 
-One boundary cannot be truthfully simulated by Linux CI: whether Microsoft's proprietary client is installed and registered on a specific Windows, Android, iOS/iPadOS or macOS device. Real-device evidence for that OS/client handoff is tracked separately; the project does not claim those external gates passed until they are exercised on the corresponding platform.
+One boundary cannot be truthfully simulated by CI: whether Microsoft's proprietary client is installed and registered on a specific Windows, Android, iOS/iPadOS or macOS device. Real-device evidence for that OS/client handoff is tracked separately; the project does not claim those external gates passed until they are exercised on the corresponding platform.
 
 ## Development
 

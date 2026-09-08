@@ -137,6 +137,8 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/me":
 		a.me(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/account/password":
+		a.changePassword(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/logout":
 		a.logout(w, r)
 	case r.URL.Path == "/api/groups":
@@ -279,6 +281,43 @@ func (a *App) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"username": s.Username, "csrfToken": s.CSRFToken})
 }
 
+func (a *App) changePassword(w http.ResponseWriter, r *http.Request) {
+	s := mustSession(r)
+	var in struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	user, err := a.store.UserByUsername(r.Context(), s.Username)
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	if !security.VerifyPassword(user.PasswordHash, in.CurrentPassword) {
+		time.Sleep(150 * time.Millisecond)
+		writeError(w, http.StatusForbidden, "current password is incorrect")
+		return
+	}
+	if security.VerifyPassword(user.PasswordHash, in.NewPassword) {
+		writeError(w, http.StatusBadRequest, "new password must be different from the current password")
+		return
+	}
+	hash, err := security.HashPassword(in.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.store.ReplaceOwnerPassword(r.Context(), user.ID, hash); err != nil {
+		a.internal(w, err)
+		return
+	}
+	user.PasswordHash = hash
+	a.startSession(w, r, user)
+}
+
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(cookieName); err == nil {
 		_ = a.store.DeleteSession(r.Context(), security.TokenHash(cookie.Value))
@@ -304,7 +343,12 @@ func (a *App) groups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if g.ID == "" {
-			g.ID, _ = security.RandomToken(12)
+			id, err := security.RandomToken(12)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			g.ID = id
 		}
 		if err := a.store.CreateGroup(r.Context(), s.UserID, g); err != nil {
 			writeError(w, 400, err.Error())
@@ -364,7 +408,12 @@ func (a *App) devices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if d.ID == "" {
-			d.ID, _ = security.RandomToken(12)
+			id, err := security.RandomToken(12)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			d.ID = id
 		}
 		if d.Port == 0 {
 			d.Port = 3389
@@ -498,7 +547,12 @@ func (a *App) importData(w http.ResponseWriter, r *http.Request) {
 	for _, g := range raw.Groups {
 		old := g.ID
 		if g.ID == "" {
-			g.ID, _ = security.RandomToken(12)
+			id, err := security.RandomToken(12)
+			if err != nil {
+				a.internal(w, err)
+				return
+			}
+			g.ID = id
 		}
 		if err := a.store.CreateGroup(r.Context(), s.UserID, g); err == nil {
 			groupMap[old] = g.ID
@@ -507,7 +561,11 @@ func (a *App) importData(w http.ResponseWriter, r *http.Request) {
 	}
 	devicesImported := 0
 	for _, item := range raw.Devices {
-		id, _ := security.RandomToken(12)
+		id, err := security.RandomToken(12)
+		if err != nil {
+			a.internal(w, err)
+			return
+		}
 		groupID := item.GroupID
 		if mapped, ok := groupMap[groupID]; ok {
 			groupID = mapped

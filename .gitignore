@@ -3,7 +3,8 @@ data/
 *.db-shm
 *.db-wal
 .env
-rdpweb
+/rdpweb
+/rdpweb.exe
 .DS_Store
 .idea/
 .vscode/

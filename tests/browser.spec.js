@@ -3,11 +3,14 @@ const fs = require('fs');
 
 test.use({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36' });
 
-test('first-run UI, CRUD, PWA, export and Windows RDP download', async ({ page }) => {
+test('first-run UI, CRUD, password lifecycle, PWA, export and Windows RDP download', async ({ page }) => {
+  const oldPassword = 'correct horse battery staple';
+  const newPassword = 'new correct horse battery staple';
+
   await page.goto('http://127.0.0.1:18081/?setup=browser-setup-token');
   await expect(page.locator('#auth')).toBeVisible();
   await page.locator('#auth-username').fill('browserowner');
-  await page.locator('#auth-password').fill('correct horse battery staple');
+  await page.locator('#auth-password').fill(oldPassword);
   await page.locator('#auth-submit').click();
   await expect(page.locator('#app')).toBeVisible();
 
@@ -51,10 +54,23 @@ test('first-run UI, CRUD, PWA, export and Windows RDP download', async ({ page }
   expect(json.app).toBe('RDP Web');
   expect(json.devices.some(d => d.host === 'browser.example.com')).toBeTruthy();
 
+  await page.locator('#password-btn').click();
+  await expect(page.locator('#password-dialog')).toBeVisible();
+  await page.locator('#password-current').fill(oldPassword);
+  await page.locator('#password-new').fill(newPassword);
+  await page.locator('#password-confirm').fill(newPassword);
+  await page.locator('#password-form button[type="submit"]').click();
+  await expect(page.locator('#password-dialog')).not.toBeVisible();
+
   await page.locator('#logout-btn').click();
   await expect(page.locator('#auth')).toBeVisible();
   await page.locator('#auth-username').fill('browserowner');
-  await page.locator('#auth-password').fill('correct horse battery staple');
+  await page.locator('#auth-password').fill(oldPassword);
   await page.locator('#auth-submit').click();
+  await expect(page.locator('#auth-error')).toContainText('invalid username or password');
+
+  await page.locator('#auth-password').fill(newPassword);
+  await page.locator('#auth-submit').click();
+  await expect(page.locator('#app')).toBeVisible();
   await expect(page.locator('.device-card')).toContainText('Browser Server');
 });

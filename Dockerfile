@@ -5,7 +5,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/rdpweb ./cmd/rdpweb
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata && addgroup -S -g 10001 rdpweb && adduser -S -D -H -u 10001 -G rdpweb rdpweb
 WORKDIR /app
 COPY --from=build /out/rdpweb /usr/local/bin/rdpweb

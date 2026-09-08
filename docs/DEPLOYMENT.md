@@ -66,6 +66,32 @@ https://rdp.example.com/?setup=TOKEN
 
 for the initial owner creation if the instance is still fresh.
 
+## Owner password rotation and recovery
+
+For routine rotation use **修改密码** in the authenticated PWA. The current password is required. On success, RDP Web atomically updates the Argon2id hash, revokes all existing web sessions and returns a fresh session to the browser that performed the rotation.
+
+If the owner password is forgotten, recovery requires control of the host/container data volume. Stop the running service first:
+
+```bash
+docker compose stop rdp-web
+```
+
+Read the new password without echoing it, pipe it to the one-shot recovery command, and remove the shell variable immediately afterwards:
+
+```bash
+read -rsp 'New RDP Web password: ' RDPWEB_NEW_PASSWORD; echo
+printf '%s' "$RDPWEB_NEW_PASSWORD" | docker compose run --rm -T rdp-web reset-password --password-stdin
+unset RDPWEB_NEW_PASSWORD
+```
+
+Then start the normal service again:
+
+```bash
+docker compose up -d
+```
+
+The reset command does not accept a password as a positional CLI argument, does not print it, and revokes every existing web session. It only changes the RDP Web owner password; it never touches Microsoft/RDP credentials because those credentials are not stored by this application.
+
 ## Health and readiness
 
 ```bash
@@ -102,7 +128,7 @@ Archive the deterministic named volume:
 docker run --rm \
   -v rdpweb-data:/data:ro \
   -v "$PWD:/backup" \
-  alpine:3.22 \
+  alpine:3.24 \
   sh -c 'cd /data && tar czf /backup/rdpweb-data.tgz .'
 ```
 
@@ -128,7 +154,7 @@ Optionally archive the current volume before replacing it. Then restore:
 docker run --rm \
   -v rdpweb-data:/data \
   -v "$PWD:/backup:ro" \
-  alpine:3.22 \
+  alpine:3.24 \
   sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar xzf /backup/rdpweb-data.tgz -C /data'
 ```
 
