@@ -1,0 +1,44 @@
+name: Account lifecycle bootstrap
+
+on:
+  push:
+    branches: [hardening/seal-account-lifecycle]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: hardening/seal-account-lifecycle
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Apply deterministic account lifecycle patch
+        run: python3 scripts/apply-account-lifecycle.py
+      - name: Normalize and verify
+        run: |
+          gofmt -w $(find . -name '*.go')
+          node --check internal/app/static/app.js
+          npm ci
+          npm audit --audit-level=high
+          go test -race ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath ./cmd/rdpweb
+      - name: Commit verified product changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add internal/app/app.go internal/app/static/app.js cmd/rdpweb/main.go cmd/rdpweb/reset_password_test.go internal/store/account.go internal/store/account_test.go internal/app/account_integration_test.go internal/app/static/index.html tests/browser.spec.js
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'feat: complete owner password lifecycle'
+          git push origin HEAD:hardening/seal-account-lifecycle
