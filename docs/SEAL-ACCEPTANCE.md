@@ -9,13 +9,25 @@ A release is **sealed** only when every automated gate below is green on the fin
 - Go formatting, Linux race tests, vet and production build.
 - Native Windows runner: `go test`, `go vet`, native build.
 - Native macOS runner: `go test`, `go vet`, native build.
+- GitHub Actions/CI dependencies use current supported major lines and execute successfully on hosted runners.
 - Docker Compose configuration validates successfully.
-- Docker image builds and the hardened container actually starts.
+- Docker image builds from the current supported Alpine runtime line and the hardened container actually starts.
 - Database-backed `/healthz` readiness succeeds.
 - First-run owner creation is atomic under concurrent requests and the database admits only one owner.
 - First-run provisioning token is required when configured.
 - Login failure throttling is enforced.
 - API request body limits reject oversized input.
+- Cryptographic ID/token generation errors are never silently ignored.
+
+### Owner account lifecycle
+
+- Authenticated password rotation requires the current password.
+- A successful password rotation atomically changes the password hash and revokes all pre-existing sessions.
+- The browser performing the rotation receives a fresh session/CSRF pair and remains authenticated.
+- The old password can no longer log in and the new password can.
+- An incorrect current password does not rotate credentials or invalidate the active session.
+- Local forgotten-password recovery is available only through host/data-volume access using `reset-password --password-stdin`.
+- Local recovery never echoes the new password, revokes existing sessions, and is covered by CLI/store tests.
 
 ### Data lifecycle
 
@@ -38,6 +50,7 @@ A release is **sealed** only when every automated gate below is green on the fin
 - A real Chromium instance completes first-run setup.
 - PWA service worker registration reaches ready state.
 - Group/device creation, search and re-login persistence work through the actual UI.
+- Owner password rotation is exercised through the actual UI; old-password failure and new-password success are verified.
 - Windows-mode connect downloads a valid UTF-16LE `.rdp` file.
 - JSON export contains the created profile.
 
@@ -46,6 +59,7 @@ A release is **sealed** only when every automated gate below is green on the fin
 - Tagged releases re-run Go race/vet and npm high-severity audit before binaries are produced.
 - Linux, Windows and macOS binaries are produced for amd64/arm64.
 - Every published binary has a SHA-256 checksum and the release workflow verifies checksums before publication.
+- Release artifact/upload/download actions are on current supported major lines and are exercised by the release workflow contract.
 
 ## External platform gates
 
