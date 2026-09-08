@@ -45,6 +45,7 @@ Repeated failed attempts are persistently throttled. A throttled request returns
 
 - `GET /api/me`
 - `POST /api/logout`
+- `POST /api/account/password`
 - `GET|POST /api/groups`
 - `PUT|DELETE /api/groups/{id}`
 - `GET|POST /api/devices`
@@ -59,7 +60,7 @@ State-changing authenticated requests must include the `X-RDPWeb-CSRF` value ret
 
 ## Session response
 
-Successful setup/login and `GET /api/me` provide:
+Successful setup/login, password rotation and `GET /api/me` provide:
 
 ```json
 {
@@ -69,6 +70,23 @@ Successful setup/login and `GET /api/me` provide:
 ```
 
 The actual session token is stored in an HttpOnly SameSite=Strict cookie and is never exposed to JavaScript.
+
+## `POST /api/account/password`
+
+Rotates the unique owner password from an authenticated session:
+
+```json
+{
+  "currentPassword": "current owner password",
+  "newPassword": "new strong owner password"
+}
+```
+
+The current password must verify and the new password must differ from it and satisfy the same password policy used during first-run setup. On success, the password hash is replaced and all existing web sessions are revoked in one database transaction. The request then receives a fresh session cookie and CSRF token so the current browser can continue without weakening the global session-revocation guarantee.
+
+This endpoint changes only the RDP Web owner password. It never changes or receives an RDP target password.
+
+If the current owner password is forgotten, recovery is intentionally outside the HTTP API and requires host/container access using `rdpweb reset-password --password-stdin`.
 
 ## Device schema
 
@@ -98,7 +116,7 @@ Returns an RDP Web schema-1 portable profile backup containing groups and device
 
 ## `POST /api/import`
 
-Migration-oriented additive importer. It accepts legacy RdpSync Android schema-1 payloads, including historical extra fields and numeric legacy IDs. New IDs are generated for imported devices and any legacy `password` value is deliberately discarded before persistence.
+Migration-oriented additive importer. It accepts legacy RdpSync Android schema-1 payloads, including historical extra fields and numeric legacy IDs. New cryptographically random IDs are generated for imported devices and any legacy `password` value is deliberately discarded before persistence.
 
 This endpoint is not the disaster-recovery replacement primitive.
 
