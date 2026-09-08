@@ -14,8 +14,12 @@ import (
 // unsupported and never appear in the URI.
 func URI(d store.Device) string {
 	pairs := [][2]string{{"full address", "s:" + store.Address(d)}}
-	if d.Username != "" { pairs = append(pairs, [2]string{"username", "s:" + d.Username}) }
-	if d.Domain != "" { pairs = append(pairs, [2]string{"domain", "s:" + d.Domain}) }
+	if d.Username != "" {
+		pairs = append(pairs, [2]string{"username", "s:" + d.Username})
+	}
+	if d.Domain != "" {
+		pairs = append(pairs, [2]string{"domain", "s:" + d.Domain})
+	}
 	if d.Gateway != "" {
 		pairs = append(pairs, [2]string{"gatewayhostname", "s:" + d.Gateway}, [2]string{"gatewayusagemethod", "i:1"})
 	}
@@ -37,7 +41,12 @@ func escape(value string) string {
 // File returns a conservative .rdp profile. It avoids drive/printer/device
 // redirection by default and does not contain a password.
 func File(d store.Device) []byte {
-	boolInt := func(v bool) int { if v { return 1 }; return 0 }
+	boolInt := func(v bool) int {
+		if v {
+			return 1
+		}
+		return 0
+	}
 	lines := []string{
 		"full address:s:" + store.Address(d),
 		"screen mode id:i:2",
@@ -56,8 +65,12 @@ func File(d store.Device) []byte {
 		"audiomode:i:" + itoa(d.AudioMode),
 		"use multimon:i:" + itoa(boolInt(d.UseMultimon)),
 	}
-	if d.Username != "" { lines = append(lines, "username:s:"+d.Username) }
-	if d.Domain != "" { lines = append(lines, "domain:s:"+d.Domain) }
+	if d.Username != "" {
+		lines = append(lines, "username:s:"+d.Username)
+	}
+	if d.Domain != "" {
+		lines = append(lines, "domain:s:"+d.Domain)
+	}
 	if d.Gateway != "" {
 		lines = append(lines, "gatewayhostname:s:"+d.Gateway, "gatewayusagemethod:i:1", "promptcredentialonce:i:1")
 	}
@@ -68,13 +81,21 @@ func utf16LE(s string) []byte {
 	runes := utf16.Encode([]rune(s))
 	out := make([]byte, 2+len(runes)*2)
 	out[0], out[1] = 0xFF, 0xFE
-	for i, r := range runes { binary.LittleEndian.PutUint16(out[2+i*2:], r) }
+	for i, r := range runes {
+		binary.LittleEndian.PutUint16(out[2+i*2:], r)
+	}
 	return out
 }
 
 func itoa(v int) string {
-	if v == 0 { return "0" }
-	if v == 1 { return "1" }
-	if v == 2 { return "2" }
+	if v == 0 {
+		return "0"
+	}
+	if v == 1 {
+		return "1"
+	}
+	if v == 2 {
+		return "2"
+	}
 	return "0"
 }

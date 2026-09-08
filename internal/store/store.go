@@ -188,45 +188,61 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 
 func (s *Store) ListGroups(ctx context.Context, userID int64) ([]Group, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,sort_order FROM groups WHERE user_id=? ORDER BY sort_order,name COLLATE NOCASE`, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	groups := []Group{}
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.ID, &g.Name, &g.SortOrder); err != nil { return nil, err }
+		if err := rows.Scan(&g.ID, &g.Name, &g.SortOrder); err != nil {
+			return nil, err
+		}
 		groups = append(groups, g)
 	}
 	return groups, rows.Err()
 }
 
 func (s *Store) CreateGroup(ctx context.Context, userID int64, g Group) error {
-	if err := ValidateGroup(g); err != nil { return err }
+	if err := ValidateGroup(g); err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO groups(id,user_id,name,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?)`, g.ID, userID, strings.TrimSpace(g.Name), g.SortOrder, now, now)
 	return err
 }
 
 func (s *Store) UpdateGroup(ctx context.Context, userID int64, g Group) error {
-	if err := ValidateGroup(g); err != nil { return err }
+	if err := ValidateGroup(g); err != nil {
+		return err
+	}
 	result, err := s.db.ExecContext(ctx, `UPDATE groups SET name=?,sort_order=?,updated_at=? WHERE id=? AND user_id=?`, strings.TrimSpace(g.Name), g.SortOrder, time.Now().UTC().Format(time.RFC3339Nano), g.ID, userID)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return requireAffected(result)
 }
 
 func (s *Store) DeleteGroup(ctx context.Context, userID int64, id string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM groups WHERE id=? AND user_id=?`, id, userID)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return requireAffected(result)
 }
 
 func (s *Store) ListDevices(ctx context.Context, userID int64) ([]Device, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(group_id,''),name,host,port,username,domain,gateway,favorite,notes,use_multimon,redirect_clipboard,audio_mode,created_at,updated_at FROM devices WHERE user_id=? ORDER BY favorite DESC,name COLLATE NOCASE`, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	devices := []Device{}
 	for rows.Next() {
 		var d Device
-		if err := rows.Scan(&d.ID,&d.GroupID,&d.Name,&d.Host,&d.Port,&d.Username,&d.Domain,&d.Gateway,&d.Favorite,&d.Notes,&d.UseMultimon,&d.RedirectClipboard,&d.AudioMode,&d.CreatedAt,&d.UpdatedAt); err != nil { return nil, err }
+		if err := rows.Scan(&d.ID, &d.GroupID, &d.Name, &d.Host, &d.Port, &d.Username, &d.Domain, &d.Gateway, &d.Favorite, &d.Notes, &d.UseMultimon, &d.RedirectClipboard, &d.AudioMode, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			return nil, err
+		}
 		devices = append(devices, d)
 	}
 	return devices, rows.Err()
@@ -234,90 +250,150 @@ func (s *Store) ListDevices(ctx context.Context, userID int64) ([]Device, error)
 
 func (s *Store) GetDevice(ctx context.Context, userID int64, id string) (Device, error) {
 	var d Device
-	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(group_id,''),name,host,port,username,domain,gateway,favorite,notes,use_multimon,redirect_clipboard,audio_mode,created_at,updated_at FROM devices WHERE id=? AND user_id=?`, id, userID).Scan(&d.ID,&d.GroupID,&d.Name,&d.Host,&d.Port,&d.Username,&d.Domain,&d.Gateway,&d.Favorite,&d.Notes,&d.UseMultimon,&d.RedirectClipboard,&d.AudioMode,&d.CreatedAt,&d.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) { return Device{}, ErrNotFound }
+	err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(group_id,''),name,host,port,username,domain,gateway,favorite,notes,use_multimon,redirect_clipboard,audio_mode,created_at,updated_at FROM devices WHERE id=? AND user_id=?`, id, userID).Scan(&d.ID, &d.GroupID, &d.Name, &d.Host, &d.Port, &d.Username, &d.Domain, &d.Gateway, &d.Favorite, &d.Notes, &d.UseMultimon, &d.RedirectClipboard, &d.AudioMode, &d.CreatedAt, &d.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
 	return d, err
 }
 
 func (s *Store) CreateDevice(ctx context.Context, userID int64, d Device) error {
-	if err := ValidateDevice(d); err != nil { return err }
-	if err := s.validateGroupOwner(ctx, userID, d.GroupID); err != nil { return err }
+	if err := ValidateDevice(d); err != nil {
+		return err
+	}
+	if err := s.validateGroupOwner(ctx, userID, d.GroupID); err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var group any
-	if d.GroupID != "" { group = d.GroupID }
-	_, err := s.db.ExecContext(ctx, `INSERT INTO devices(id,user_id,group_id,name,host,port,username,domain,gateway,favorite,notes,use_multimon,redirect_clipboard,audio_mode,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, d.ID,userID,group,strings.TrimSpace(d.Name),strings.TrimSpace(d.Host),d.Port,strings.TrimSpace(d.Username),strings.TrimSpace(d.Domain),strings.TrimSpace(d.Gateway),d.Favorite,strings.TrimSpace(d.Notes),d.UseMultimon,d.RedirectClipboard,d.AudioMode,now,now)
+	if d.GroupID != "" {
+		group = d.GroupID
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO devices(id,user_id,group_id,name,host,port,username,domain,gateway,favorite,notes,use_multimon,redirect_clipboard,audio_mode,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, d.ID, userID, group, strings.TrimSpace(d.Name), strings.TrimSpace(d.Host), d.Port, strings.TrimSpace(d.Username), strings.TrimSpace(d.Domain), strings.TrimSpace(d.Gateway), d.Favorite, strings.TrimSpace(d.Notes), d.UseMultimon, d.RedirectClipboard, d.AudioMode, now, now)
 	return err
 }
 
 func (s *Store) UpdateDevice(ctx context.Context, userID int64, d Device) error {
-	if err := ValidateDevice(d); err != nil { return err }
-	if err := s.validateGroupOwner(ctx, userID, d.GroupID); err != nil { return err }
+	if err := ValidateDevice(d); err != nil {
+		return err
+	}
+	if err := s.validateGroupOwner(ctx, userID, d.GroupID); err != nil {
+		return err
+	}
 	var group any
-	if d.GroupID != "" { group = d.GroupID }
-	result, err := s.db.ExecContext(ctx, `UPDATE devices SET group_id=?,name=?,host=?,port=?,username=?,domain=?,gateway=?,favorite=?,notes=?,use_multimon=?,redirect_clipboard=?,audio_mode=?,updated_at=? WHERE id=? AND user_id=?`, group,strings.TrimSpace(d.Name),strings.TrimSpace(d.Host),d.Port,strings.TrimSpace(d.Username),strings.TrimSpace(d.Domain),strings.TrimSpace(d.Gateway),d.Favorite,strings.TrimSpace(d.Notes),d.UseMultimon,d.RedirectClipboard,d.AudioMode,time.Now().UTC().Format(time.RFC3339Nano),d.ID,userID)
-	if err != nil { return err }
+	if d.GroupID != "" {
+		group = d.GroupID
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE devices SET group_id=?,name=?,host=?,port=?,username=?,domain=?,gateway=?,favorite=?,notes=?,use_multimon=?,redirect_clipboard=?,audio_mode=?,updated_at=? WHERE id=? AND user_id=?`, group, strings.TrimSpace(d.Name), strings.TrimSpace(d.Host), d.Port, strings.TrimSpace(d.Username), strings.TrimSpace(d.Domain), strings.TrimSpace(d.Gateway), d.Favorite, strings.TrimSpace(d.Notes), d.UseMultimon, d.RedirectClipboard, d.AudioMode, time.Now().UTC().Format(time.RFC3339Nano), d.ID, userID)
+	if err != nil {
+		return err
+	}
 	return requireAffected(result)
 }
 
 func (s *Store) DeleteDevice(ctx context.Context, userID int64, id string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE id=? AND user_id=?`, id, userID)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return requireAffected(result)
 }
 
 func (s *Store) validateGroupOwner(ctx context.Context, userID int64, groupID string) error {
-	if groupID == "" { return nil }
+	if groupID == "" {
+		return nil
+	}
 	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM groups WHERE id=? AND user_id=?`, groupID, userID).Scan(&count); err != nil { return err }
-	if count != 1 { return errors.New("invalid group") }
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM groups WHERE id=? AND user_id=?`, groupID, userID).Scan(&count); err != nil {
+		return err
+	}
+	if count != 1 {
+		return errors.New("invalid group")
+	}
 	return nil
 }
 
 func ValidateGroup(g Group) error {
-	if strings.TrimSpace(g.ID) == "" || len(g.ID) > 64 { return errors.New("invalid group id") }
+	if strings.TrimSpace(g.ID) == "" || len(g.ID) > 64 {
+		return errors.New("invalid group id")
+	}
 	name := strings.TrimSpace(g.Name)
-	if name == "" || len(name) > 100 || hasLineBreak(name) { return errors.New("group name must be 1-100 characters") }
-	if g.SortOrder < -100000 || g.SortOrder > 100000 { return errors.New("invalid group sort order") }
+	if name == "" || len(name) > 100 || hasLineBreak(name) {
+		return errors.New("group name must be 1-100 characters")
+	}
+	if g.SortOrder < -100000 || g.SortOrder > 100000 {
+		return errors.New("invalid group sort order")
+	}
 	return nil
 }
 
 func ValidateDevice(d Device) error {
-	if strings.TrimSpace(d.ID) == "" || len(d.ID) > 64 { return errors.New("invalid device id") }
-	if v := strings.TrimSpace(d.Name); v == "" || len(v) > 120 || hasLineBreak(v) { return errors.New("device name must be 1-120 characters") }
+	if strings.TrimSpace(d.ID) == "" || len(d.ID) > 64 {
+		return errors.New("invalid device id")
+	}
+	if v := strings.TrimSpace(d.Name); v == "" || len(v) > 120 || hasLineBreak(v) {
+		return errors.New("device name must be 1-120 characters")
+	}
 	host := strings.TrimSpace(d.Host)
-	if host == "" || len(host) > 253 || strings.ContainsAny(host, "\r\n\t /\\") || strings.Contains(host, "://") { return errors.New("invalid host") }
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") { host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]") }
+	if host == "" || len(host) > 253 || strings.ContainsAny(host, "\r\n\t /\\") || strings.Contains(host, "://") {
+		return errors.New("invalid host")
+	}
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
 	if ip := net.ParseIP(host); ip == nil {
 		for _, label := range strings.Split(host, ".") {
-			if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") { return errors.New("invalid host") }
-			for _, r := range label { if !(r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') { return errors.New("invalid host") } }
+			if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+				return errors.New("invalid host")
+			}
+			for _, r := range label {
+				if !(r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+					return errors.New("invalid host")
+				}
+			}
 		}
 	}
-	if d.Port < 1 || d.Port > 65535 { return errors.New("port must be between 1 and 65535") }
+	if d.Port < 1 || d.Port > 65535 {
+		return errors.New("port must be between 1 and 65535")
+	}
 	for name, value := range map[string]string{"username": d.Username, "domain": d.Domain, "gateway": d.Gateway} {
-		if len(value) > 255 || hasLineBreak(value) { return fmt.Errorf("invalid %s", name) }
+		if len(value) > 255 || hasLineBreak(value) {
+			return fmt.Errorf("invalid %s", name)
+		}
 	}
 	if d.Gateway != "" {
 		if _, _, err := net.SplitHostPort(d.Gateway); err != nil {
 			gatewayHost := strings.Trim(d.Gateway, "[]")
-			if net.ParseIP(gatewayHost) == nil && strings.ContainsAny(gatewayHost, " /\\") { return errors.New("invalid gateway") }
+			if net.ParseIP(gatewayHost) == nil && strings.ContainsAny(gatewayHost, " /\\") {
+				return errors.New("invalid gateway")
+			}
 		}
 	}
-	if len(d.Notes) > 4000 { return errors.New("notes too long") }
-	if d.AudioMode < 0 || d.AudioMode > 2 { return errors.New("audio mode must be 0, 1 or 2") }
+	if len(d.Notes) > 4000 {
+		return errors.New("notes too long")
+	}
+	if d.AudioMode < 0 || d.AudioMode > 2 {
+		return errors.New("audio mode must be 0, 1 or 2")
+	}
 	return nil
 }
 
 func Address(d Device) string {
 	host := strings.TrimSpace(d.Host)
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") { host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]") }
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
 	return net.JoinHostPort(host, strconv.Itoa(d.Port))
 }
 
 func requireAffected(result sql.Result) error {
 	n, err := result.RowsAffected()
-	if err != nil { return err }
-	if n == 0 { return ErrNotFound }
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
 	return nil
 }
 
