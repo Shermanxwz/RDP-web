@@ -1,0 +1,27 @@
+name: One-shot branch cleanup
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Delete merged development branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for branch in feat/product-v1 hardening/seal-v1 hardening/seal-account-lifecycle; do
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+              git push origin --delete "$branch"
+            fi
+          done
