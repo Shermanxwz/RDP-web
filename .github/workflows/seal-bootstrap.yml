@@ -33,8 +33,9 @@ jobs:
           go test -race ./...
           go vet ./...
           CGO_ENABLED=0 go build -trimpath ./cmd/rdpweb
-      - name: Commit verified hardening
+      - name: Commit verified non-workflow hardening
         run: |
+          git restore .github/workflows/ci.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
