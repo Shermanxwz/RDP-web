@@ -11,8 +11,9 @@ services:
       RDPWEB_ADDR: ":8080"
       RDPWEB_DATA_DIR: "/data"
       RDPWEB_PUBLIC_URL: "${RDPWEB_PUBLIC_URL:-}"
-      RDPWEB_SECURE_COOKIE: "${RDPWEB_SECURE_COOKIE:-false}"
+      RDPWEB_SECURE_COOKIE: "${RDPWEB_SECURE_COOKIE:-auto}"
       RDPWEB_SETUP_TOKEN: "${RDPWEB_SETUP_TOKEN:-}"
+      RDPWEB_SESSION_TTL: "${RDPWEB_SESSION_TTL:-720h}"
     volumes:
       - rdpweb-data:/data
     read_only: true
@@ -25,3 +26,4 @@ services:
 
 volumes:
   rdpweb-data:
+    name: rdpweb-data
