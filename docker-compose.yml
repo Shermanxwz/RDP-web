@@ -1,0 +1,18 @@
+services:
+  rdp-web:
+    build: .
+    container_name: rdp-web
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      RDPWEB_ADDR: ":8080"
+      RDPWEB_DATA_DIR: "/data"
+      # RDPWEB_PUBLIC_URL: "https://rdp.example.com"
+      # RDPWEB_SECURE_COOKIE: "true"
+    volumes:
+      - ./data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

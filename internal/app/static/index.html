@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="Cloud-synced launcher for Microsoft Remote Desktop clients">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <title>RDP Web</title>
+</head>
+<body>
+  <div id="auth" class="auth-shell hidden">
+    <section class="auth-card">
+      <div class="brand-mark">R</div>
+      <h1>RDP Web</h1>
+      <p id="auth-subtitle" class="muted">连接列表交给云端，RDP 交给微软。</p>
+      <form id="auth-form">
+        <label>用户名<input id="auth-username" autocomplete="username" minlength="3" maxlength="64" required></label>
+        <label>密码<input id="auth-password" type="password" autocomplete="current-password" minlength="12" required></label>
+        <button id="auth-submit" class="primary" type="submit">登录</button>
+      </form>
+      <p id="auth-error" class="error"></p>
+    </section>
+  </div>
+
+  <div id="app" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark small">R</div><strong>RDP Web</strong></div>
+      <nav>
+        <button class="nav-item active" data-filter="all">全部连接 <span id="count-all">0</span></button>
+        <button class="nav-item" data-filter="favorite">收藏 <span id="count-favorite">0</span></button>
+        <div class="nav-heading"><span>分组</span><button id="add-group" title="新建分组">＋</button></div>
+        <div id="group-list"></div>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="import-btn" class="text-button">导入</button>
+        <button id="export-btn" class="text-button">导出</button>
+        <button id="logout-btn" class="text-button">退出</button>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <button id="menu-btn" class="icon-button mobile-only" aria-label="菜单">☰</button>
+        <div class="search-wrap"><span>⌕</span><input id="search" type="search" placeholder="搜索名称、地址、用户名…" autocomplete="off"></div>
+        <button id="add-device" class="primary">＋ 新建连接</button>
+      </header>
+      <section class="content">
+        <div class="content-head"><div><h2 id="view-title">全部连接</h2><p id="view-subtitle" class="muted">0 个连接</p></div></div>
+        <div id="empty" class="empty hidden"><div class="empty-icon">⌁</div><h3>还没有连接</h3><p>添加第一台远程电脑。RDP 密码不会存进 RDP Web。</p><button class="primary" id="empty-add">新建连接</button></div>
+        <div id="device-grid" class="device-grid"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="device-dialog">
+    <form id="device-form" method="dialog">
+      <div class="dialog-head"><div><h2 id="device-dialog-title">新建连接</h2><p class="muted">密码由微软客户端本地管理。</p></div><button type="button" class="icon-button close-dialog">×</button></div>
+      <input id="device-id" type="hidden">
+      <div class="form-grid">
+        <label class="span-2">名称<input id="device-name" maxlength="120" placeholder="例如：SG Amazon 01" required></label>
+        <label>主机<input id="device-host" maxlength="253" placeholder="10.0.0.10 或 pc.example.com" required></label>
+        <label>端口<input id="device-port" type="number" min="1" max="65535" value="3389" required></label>
+        <label>用户名<input id="device-username" maxlength="255" autocomplete="off" placeholder="Administrator"></label>
+        <label>域<input id="device-domain" maxlength="255" placeholder="可选"></label>
+        <label class="span-2">RD Gateway<input id="device-gateway" maxlength="255" placeholder="可选"></label>
+        <label>分组<select id="device-group"><option value="">未分组</option></select></label>
+        <label>音频<select id="device-audio"><option value="0">本地播放</option><option value="1">远程播放</option><option value="2">禁用</option></select></label>
+        <label class="check"><input id="device-favorite" type="checkbox"> 收藏</label>
+        <label class="check"><input id="device-clipboard" type="checkbox" checked> 剪贴板</label>
+        <label class="check"><input id="device-multimon" type="checkbox"> Windows 多显示器</label>
+        <label class="span-2">备注<textarea id="device-notes" maxlength="4000" rows="3"></textarea></label>
+      </div>
+      <p id="device-error" class="error"></p>
+      <div class="dialog-actions"><button id="delete-device" type="button" class="danger hidden">删除</button><span></span><button type="button" class="secondary close-dialog">取消</button><button type="submit" class="primary">保存</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="group-dialog">
+    <form id="group-form" method="dialog">
+      <div class="dialog-head"><h2 id="group-dialog-title">新建分组</h2><button type="button" class="icon-button close-group">×</button></div>
+      <input id="group-id" type="hidden">
+      <label>名称<input id="group-name" maxlength="100" required></label>
+      <p id="group-error" class="error"></p>
+      <div class="dialog-actions"><button id="delete-group" type="button" class="danger hidden">删除</button><span></span><button type="button" class="secondary close-group">取消</button><button type="submit" class="primary">保存</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="import-dialog">
+    <form id="import-form" method="dialog">
+      <div class="dialog-head"><div><h2>导入连接</h2><p class="muted">支持 RDP Web 备份和 RdpSync Android schema 1。</p></div><button type="button" class="icon-button close-import">×</button></div>
+      <input id="import-file" type="file" accept="application/json,.json" required>
+      <div class="notice">旧 RdpSync 文件中的 <code>password</code> 字段会被明确丢弃，不会进入数据库。</div>
+      <p id="import-error" class="error"></p>
+      <div class="dialog-actions"><span></span><button type="button" class="secondary close-import">取消</button><button type="submit" class="primary">导入</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
