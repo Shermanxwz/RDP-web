@@ -103,7 +103,7 @@ func env(key, fallback string) string {
 
 func boolEnv(key string, fallback bool) bool {
 	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
+	if value == "" || strings.EqualFold(value, "auto") {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(value)
