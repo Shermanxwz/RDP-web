@@ -54,3 +54,9 @@ rdp.example.com {
 ## Network exposure
 
 Only the web port must be reachable by users. RDP Web does not proxy TCP/3389. The user's Microsoft RDP client connects directly to the target host or configured RD Gateway after handoff.
+
+## First-run provisioning
+
+When no owner exists and `RDPWEB_SETUP_TOKEN` is not set, the service generates a random first-run setup token and writes it to the container log. Open the site once with `?setup=TOKEN` to create the unique owner. After setup, the token is no longer used. You may instead set `RDPWEB_SETUP_TOKEN` explicitly.
+
+The default Compose file binds HTTP to `127.0.0.1:8080`; put Caddy/Nginx in front for HTTPS. Set `RDPWEB_PUBLIC_URL=https://rdp.example.com` and `RDPWEB_SECURE_COOKIE=true`. The default persistent storage is the named volume `rdpweb-data`, avoiding host UID permission failures.

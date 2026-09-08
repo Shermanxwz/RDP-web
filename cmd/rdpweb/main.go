@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Shermanxwz/RDP-web/internal/app"
+	"github.com/Shermanxwz/RDP-web/internal/security"
 	"github.com/Shermanxwz/RDP-web/internal/store"
 )
 
@@ -37,12 +38,28 @@ func main() {
 	}
 	defer db.Close()
 
+	setupToken := strings.TrimSpace(os.Getenv("RDPWEB_SETUP_TOKEN"))
+	count, err := db.UserCount(context.Background())
+	if err != nil {
+		logger.Error("read setup state", "error", err)
+		os.Exit(1)
+	}
+	if count == 0 && setupToken == "" {
+		setupToken, err = security.RandomToken(18)
+		if err != nil {
+			logger.Error("generate setup token", "error", err)
+			os.Exit(1)
+		}
+		logger.Warn("first-run setup token generated; append it as ?setup=TOKEN when opening RDP Web", "setup_token", setupToken)
+	}
+
 	handler, err := app.New(app.Config{
 		Store:        db,
 		Logger:       logger,
 		PublicURL:    publicURL,
 		SecureCookie: secureCookie,
 		SessionTTL:   ttl,
+		SetupToken:   setupToken,
 	})
 	if err != nil {
 		logger.Error("initialize application", "error", err)

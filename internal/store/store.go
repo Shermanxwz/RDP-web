@@ -15,6 +15,7 @@ import (
 )
 
 var ErrNotFound = errors.New("not found")
+var ErrSetupComplete = errors.New("setup is already complete")
 
 type Store struct{ db *sql.DB }
 
@@ -85,6 +86,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_owner ON users((1));
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -93,6 +95,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+CREATE TABLE IF NOT EXISTS login_failures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  failure_key TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_failures_key_time ON login_failures(failure_key, created_at);
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -125,6 +133,46 @@ CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id, favorite DESC, n
 `
 	_, err := s.db.ExecContext(ctx, schema)
 	return err
+}
+
+func (s *Store) Health(ctx context.Context) error {
+	var one int
+	return s.db.QueryRowContext(ctx, `SELECT 1`).Scan(&one)
+}
+
+func (s *Store) CreateInitialOwner(ctx context.Context, username, passwordHash string) (User, error) {
+	username = strings.TrimSpace(username)
+	if len(username) < 3 || len(username) > 64 || strings.ContainsAny(username, "\r\n\t") {
+		return User{}, errors.New("username must be 3-64 characters")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		return User{}, err
+	}
+	if count != 0 {
+		return User{}, ErrSetupComplete
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `INSERT INTO users(username,password_hash,created_at) VALUES(?,?,?)`, username, passwordHash, now)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return User{}, ErrSetupComplete
+		}
+		return User{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return User{ID: id, Username: username, PasswordHash: passwordHash}, nil
 }
 
 func (s *Store) UserCount(ctx context.Context) (int, error) {
@@ -179,6 +227,23 @@ func (s *Store) SessionByHash(ctx context.Context, tokenHash string) (Session, e
 		return Session{}, ErrNotFound
 	}
 	return sess, nil
+}
+
+func (s *Store) LoginFailureCount(ctx context.Context, key string, since time.Time) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM login_failures WHERE failure_key=? AND created_at>=?`, key, since.UTC().Format(time.RFC3339Nano)).Scan(&count)
+	return count, err
+}
+
+func (s *Store) RecordLoginFailure(ctx context.Context, key string, now time.Time) error {
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM login_failures WHERE created_at < ?`, now.Add(-24*time.Hour).UTC().Format(time.RFC3339Nano))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO login_failures(failure_key,created_at) VALUES(?,?)`, key, now.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) ClearLoginFailures(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM login_failures WHERE failure_key=?`, key)
+	return err
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
@@ -311,6 +376,70 @@ func (s *Store) validateGroupOwner(ctx context.Context, userID int64, groupID st
 		return errors.New("invalid group")
 	}
 	return nil
+}
+
+type RestorePayload struct {
+	Groups  []Group
+	Devices []Device
+}
+
+func (s *Store) RestoreReplace(ctx context.Context, userID int64, payload RestorePayload) error {
+	if len(payload.Groups) > 500 || len(payload.Devices) > 5000 {
+		return errors.New("restore is too large")
+	}
+	groups := make(map[string]struct{}, len(payload.Groups))
+	for _, g := range payload.Groups {
+		if err := ValidateGroup(g); err != nil {
+			return err
+		}
+		if _, exists := groups[g.ID]; exists {
+			return errors.New("duplicate group id")
+		}
+		groups[g.ID] = struct{}{}
+	}
+	devices := make(map[string]struct{}, len(payload.Devices))
+	for _, d := range payload.Devices {
+		if err := ValidateDevice(d); err != nil {
+			return err
+		}
+		if _, exists := devices[d.ID]; exists {
+			return errors.New("duplicate device id")
+		}
+		devices[d.ID] = struct{}{}
+		if d.GroupID != "" {
+			if _, ok := groups[d.GroupID]; !ok {
+				return errors.New("device references unknown group")
+			}
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE user_id=?`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM groups WHERE user_id=?`, userID); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, g := range payload.Groups {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO groups(id,user_id,name,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?)`, g.ID, userID, strings.TrimSpace(g.Name), g.SortOrder, now, now); err != nil {
+			return err
+		}
+	}
+	for _, d := range payload.Devices {
+		var group any
+		if d.GroupID != "" {
+			group = d.GroupID
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id,user_id,group_id,name,host,port,username,domain,gateway,favorite,notes,use_multimon,redirect_clipboard,audio_mode,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, d.ID, userID, group, strings.TrimSpace(d.Name), strings.TrimSpace(d.Host), d.Port, strings.TrimSpace(d.Username), strings.TrimSpace(d.Domain), strings.TrimSpace(d.Gateway), d.Favorite, strings.TrimSpace(d.Notes), d.UseMultimon, d.RedirectClipboard, d.AudioMode, now, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func ValidateGroup(g Group) error {

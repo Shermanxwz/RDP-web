@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -32,6 +33,7 @@ type Config struct {
 	PublicURL    string
 	SecureCookie bool
 	SessionTTL   time.Duration
+	SetupToken   string
 }
 
 type App struct {
@@ -40,6 +42,7 @@ type App struct {
 	publicOrigin string
 	secureCookie bool
 	sessionTTL   time.Duration
+	setupToken   string
 	static       fs.FS
 }
 
@@ -69,19 +72,26 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{store: cfg.Store, logger: cfg.Logger, publicOrigin: origin, secureCookie: cfg.SecureCookie, sessionTTL: cfg.SessionTTL, static: assets}, nil
+	return &App{store: cfg.Store, logger: cfg.Logger, publicOrigin: origin, secureCookie: cfg.SecureCookie, sessionTTL: cfg.SessionTTL, setupToken: cfg.SetupToken, static: assets}, nil
 }
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	ww := &statusWriter{ResponseWriter: w, status: 200}
 	a.securityHeaders(ww)
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		ww.Header().Set("Cache-Control", "no-store")
+	}
 	a.route(ww, r)
 	a.logger.Info("http", "method", r.Method, "path", r.URL.Path, "status", ww.status, "duration_ms", time.Since(start).Milliseconds())
 }
 
 func (a *App) route(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" {
+		if err := a.store.Health(r.Context()); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -141,6 +151,8 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 		a.export(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/import":
 		a.importData(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/restore":
+		a.restoreData(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
@@ -160,18 +172,17 @@ func (a *App) setup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid origin")
 		return
 	}
-	count, err := a.store.UserCount(r.Context())
-	if err != nil {
-		a.internal(w, err)
-		return
+	var in struct {
+		Username   string `json:"username"`
+		Password   string `json:"password"`
+		SetupToken string `json:"setupToken"`
 	}
-	if count != 0 {
-		writeError(w, http.StatusConflict, "setup is already complete")
-		return
-	}
-	var in struct{ Username, Password string }
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if a.setupToken != "" && !security.ConstantEqual(in.SetupToken, a.setupToken) {
+		writeError(w, http.StatusForbidden, "invalid setup token")
 		return
 	}
 	hash, err := security.HashPassword(in.Password)
@@ -179,7 +190,11 @@ func (a *App) setup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	user, err := a.store.CreateUser(r.Context(), in.Username, hash)
+	user, err := a.store.CreateInitialOwner(r.Context(), in.Username, hash)
+	if errors.Is(err, store.ErrSetupComplete) {
+		writeError(w, http.StatusConflict, "setup is already complete")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "unable to create owner account")
 		return
@@ -192,18 +207,42 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid origin")
 		return
 	}
-	var in struct{ Username, Password string }
+	var in struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	key := loginFailureKey(r, in.Username)
+	count, err := a.store.LoginFailureCount(r.Context(), key, time.Now().Add(-15*time.Minute))
+	if err != nil {
+		a.internal(w, err)
+		return
+	}
+	if count >= 12 {
+		w.Header().Set("Retry-After", "900")
+		writeError(w, http.StatusTooManyRequests, "too many login attempts")
+		return
+	}
 	user, err := a.store.UserByUsername(r.Context(), in.Username)
 	if err != nil || !security.VerifyPassword(user.PasswordHash, in.Password) {
+		_ = a.store.RecordLoginFailure(r.Context(), key, time.Now())
 		time.Sleep(150 * time.Millisecond)
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
+	_ = a.store.ClearLoginFailures(r.Context(), key)
 	a.startSession(w, r, user)
+}
+
+func loginFailureKey(r *http.Request, username string) string {
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+	return security.TokenHash(strings.ToLower(strings.TrimSpace(username)) + "|" + host)
 }
 
 func (a *App) startSession(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -488,6 +527,24 @@ func (a *App) importData(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"groupsImported": groupsImported, "devicesImported": devicesImported, "passwordsImported": 0})
 }
 
+func (a *App) restoreData(w http.ResponseWriter, r *http.Request) {
+	s := mustSession(r)
+	var raw backup
+	if err := decodeJSONCompat(r, &raw, 2<<20); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if raw.Schema != 1 || raw.App != "RDP Web" {
+		writeError(w, http.StatusBadRequest, "restore requires an RDP Web schema-1 backup")
+		return
+	}
+	if err := a.store.RestoreReplace(r.Context(), s.UserID, store.RestorePayload{Groups: raw.Groups, Devices: raw.Devices}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groupsRestored": len(raw.Groups), "devicesRestored": len(raw.Devices)})
+}
+
 func (a *App) validOrigin(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
@@ -545,6 +602,12 @@ func (a *App) securityHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	w.Header().Set("X-Permitted-Cross-Domain-Policies", "none")
+	if a.secureCookie {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	}
 }
 
 func (a *App) internal(w http.ResponseWriter, err error) {
@@ -572,8 +635,11 @@ func methodNotAllowed(w http.ResponseWriter) { writeError(w, 405, "method not al
 
 func decodeJSON(r *http.Request, dst any) error { return decodeJSONLimit(r, dst, 1<<20) }
 func decodeJSONCompat(r *http.Request, dst any, limit int64) error {
-	defer r.Body.Close()
-	dec := json.NewDecoder(io.LimitReader(r.Body, limit))
+	body, err := readBodyLimit(r, limit)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(strings.NewReader(string(body)))
 	if err := dec.Decode(dst); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
@@ -584,8 +650,11 @@ func decodeJSONCompat(r *http.Request, dst any, limit int64) error {
 }
 
 func decodeJSONLimit(r *http.Request, dst any, limit int64) error {
-	defer r.Body.Close()
-	dec := json.NewDecoder(io.LimitReader(r.Body, limit))
+	body, err := readBodyLimit(r, limit)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(strings.NewReader(string(body)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)
@@ -594,6 +663,18 @@ func decodeJSONLimit(r *http.Request, dst any, limit int64) error {
 		return errors.New("invalid JSON: multiple values")
 	}
 	return nil
+}
+
+func readBodyLimit(r *http.Request, limit int64) ([]byte, error) {
+	defer r.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, errors.New("request body is too large")
+	}
+	return body, nil
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

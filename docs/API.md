@@ -45,3 +45,7 @@ State-changing authenticated requests must include the `X-RDPWeb-CSRF` value ret
 ```
 
 There is deliberately no password field in the supported device API.
+
+## POST /api/restore
+
+Atomically replaces the authenticated owner's groups and devices from an RDP Web schema-1 backup. Validation happens before mutation; any failure rolls the transaction back.
